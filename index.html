@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trading Bot Dashboard</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, Roboto, Arial, sans-serif;
+    background: #0f1117;
+    color: #e6e6e6;
+    margin: 0;
+    padding: 12px;
+  }
+  h1 { font-size: 20px; margin: 8px 0 16px; }
+  .updated { color: #888; font-size: 12px; margin-bottom: 16px; }
+  .card {
+    background: #1a1d27;
+    border-radius: 12px;
+    padding: 14px;
+    margin-bottom: 14px;
+  }
+  .card h2 { font-size: 15px; margin: 0 0 10px; color: #9aa5ff; }
+  .row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 14px; }
+  .row span:first-child { color: #999; }
+  .pos { color: #4ade80; font-weight: 600; }
+  .neg { color: #f87171; font-weight: 600; }
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 6px;
+    font-size: 11px; font-weight: 600;
+  }
+  .badge.buy { background: #163a26; color: #4ade80; }
+  .badge.sell { background: #3a1616; color: #f87171; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { text-align: left; padding: 6px 4px; border-bottom: 1px solid #2a2d3a; }
+  th { color: #888; font-weight: 500; }
+  .empty { color: #666; font-size: 13px; padding: 8px 0; }
+  .log-line { font-size: 12px; color: #aaa; padding: 3px 0; border-bottom: 1px solid #22242f; }
+</style>
+</head>
+<body>
+  <h1>📈 Trading Bot — Paper Trading</h1>
+  <div class="updated">Last updated: <span id="updated">{{ data.last_updated }}</span> · auto-refreshes every 30s</div>
+
+  <div id="content">
+    {% for symbol, s in data.summary.items() %}
+    <div class="card">
+      <h2>{{ symbol }}</h2>
+      <div class="row"><span>Total trades</span><span>{{ s.total_trades }}</span></div>
+      <div class="row"><span>Win rate</span><span>{{ s.win_rate }}%</span></div>
+      <div class="row"><span>Total P&amp;L</span>
+        <span class="{{ 'pos' if s.total_pnl >= 0 else 'neg' }}">₹{{ "%.2f"|format(s.total_pnl) }}</span>
+      </div>
+    </div>
+    {% endfor %}
+
+    <div class="card">
+      <h2>Open Positions</h2>
+      {% if data.open_trades %}
+      <table>
+        <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Time</th></tr>
+        {% for t in data.open_trades %}
+        <tr>
+          <td>{{ t.symbol }}</td>
+          <td><span class="badge {{ 'buy' if t.side=='BUY' else 'sell' }}">{{ t.side }}</span></td>
+          <td>{{ "%.2f"|format(t.entry_price) }}</td>
+          <td>{{ t.entry_time[11:16] }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+      {% else %}
+      <div class="empty">No open positions right now.</div>
+      {% endif %}
+    </div>
+
+    <div class="card">
+      <h2>Recent Closed Trades</h2>
+      {% if data.closed_trades %}
+      <table>
+        <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>P&amp;L</th><th>Reason</th></tr>
+        {% for t in data.closed_trades[:15] %}
+        <tr>
+          <td>{{ t.symbol }}</td>
+          <td><span class="badge {{ 'buy' if t.side=='BUY' else 'sell' }}">{{ t.side }}</span></td>
+          <td>{{ "%.2f"|format(t.entry_price) }}</td>
+          <td>{{ "%.2f"|format(t.exit_price) }}</td>
+          <td class="{{ 'pos' if t.pnl_rupees >= 0 else 'neg' }}">₹{{ "%.2f"|format(t.pnl_rupees) }}</td>
+          <td>{{ t.exit_reason }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+      {% else %}
+      <div class="empty">No closed trades yet.</div>
+      {% endif %}
+    </div>
+
+    <div class="card">
+      <h2>Bot Activity Log</h2>
+      {% if data.status_log %}
+        {% for l in data.status_log %}
+        <div class="log-line">[{{ l.symbol }}] {{ l.message }} — {{ l.timestamp[11:19] }}</div>
+        {% endfor %}
+      {% else %}
+      <div class="empty">No activity yet.</div>
+      {% endif %}
+    </div>
+  </div>
+
+<script>
+  // Auto-refresh the data every 30 seconds without a full page reload
+  async function refresh() {
+    try {
+      const res = await fetch('/api/data');
+      const data = await res.json();
+      document.getElementById('updated').textContent = data.last_updated;
+      // Simple approach: reload the page to re-render the template server-side
+      location.reload();
+    } catch (e) {
+      console.error('Refresh failed', e);
+    }
+  }
+  setInterval(refresh, 30000);
+</script>
+</body>
+</html>
