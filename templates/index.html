@@ -21,7 +21,15 @@
     padding: 14px;
     margin-bottom: 14px;
   }
-  .card h2 { font-size: 15px; margin: 0 0 10px; color: #9aa5ff; }
+  .card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .card h2 { font-size: 15px; margin: 0; color: #9aa5ff; }
+  .market-tag {
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    padding: 2px 7px; border-radius: 5px; letter-spacing: 0.5px;
+  }
+  .market-tag.nse { background: #1e3a5f; color: #7cc4ff; }
+  .market-tag.crypto { background: #3a2a1e; color: #ffb37c; }
+  .market-tag.forex { background: #2a3a1e; color: #b8ff7c; }
   .row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 14px; }
   .row span:first-child { color: #999; }
   .pos { color: #4ade80; font-weight: 600; }
@@ -37,20 +45,25 @@
   th { color: #888; font-weight: 500; }
   .empty { color: #666; font-size: 13px; padding: 8px 0; }
   .log-line { font-size: 12px; color: #aaa; padding: 3px 0; border-bottom: 1px solid #22242f; }
+  .section-title { font-size: 13px; color: #666; text-transform: uppercase; letter-spacing: 0.5px; margin: 18px 0 8px; }
 </style>
 </head>
 <body>
-  <h1>📈 Trading Bot — Paper Trading</h1>
-  <div class="updated">Last updated: <span id="updated">{{ data.last_updated }}</span> · auto-refreshes every 30s</div>
+  <h1>ðŸ“ˆ Trading Bot â€” Paper Trading</h1>
+  <div class="updated">Last updated: <span id="updated">{{ data.last_updated }}</span> Â· auto-refreshes every 30s</div>
 
   <div id="content">
+    <div class="section-title">Markets</div>
     {% for symbol, s in data.summary.items() %}
     <div class="card">
-      <h2>{{ symbol }}</h2>
+      <div class="card-header">
+        <h2>{{ symbol }}</h2>
+        <span class="market-tag {{ s.market }}">{{ s.market }}</span>
+      </div>
       <div class="row"><span>Total trades</span><span>{{ s.total_trades }}</span></div>
       <div class="row"><span>Win rate</span><span>{{ s.win_rate }}%</span></div>
       <div class="row"><span>Total P&amp;L</span>
-        <span class="{{ 'pos' if s.total_pnl >= 0 else 'neg' }}">₹{{ "%.2f"|format(s.total_pnl) }}</span>
+        <span class="{{ 'pos' if s.total_pnl >= 0 else 'neg' }}">â‚¹{{ "%.2f"|format(s.total_pnl) }}</span>
       </div>
     </div>
     {% endfor %}
@@ -64,7 +77,7 @@
         <tr>
           <td>{{ t.symbol }}</td>
           <td><span class="badge {{ 'buy' if t.side=='BUY' else 'sell' }}">{{ t.side }}</span></td>
-          <td>{{ "%.2f"|format(t.entry_price) }}</td>
+          <td>{{ "%.4f"|format(t.entry_price) }}</td>
           <td>{{ t.entry_time[11:16] }}</td>
         </tr>
         {% endfor %}
@@ -83,9 +96,9 @@
         <tr>
           <td>{{ t.symbol }}</td>
           <td><span class="badge {{ 'buy' if t.side=='BUY' else 'sell' }}">{{ t.side }}</span></td>
-          <td>{{ "%.2f"|format(t.entry_price) }}</td>
-          <td>{{ "%.2f"|format(t.exit_price) }}</td>
-          <td class="{{ 'pos' if t.pnl_rupees >= 0 else 'neg' }}">₹{{ "%.2f"|format(t.pnl_rupees) }}</td>
+          <td>{{ "%.4f"|format(t.entry_price) }}</td>
+          <td>{{ "%.4f"|format(t.exit_price) }}</td>
+          <td class="{{ 'pos' if t.pnl_rupees >= 0 else 'neg' }}">â‚¹{{ "%.2f"|format(t.pnl_rupees) }}</td>
           <td>{{ t.exit_reason }}</td>
         </tr>
         {% endfor %}
@@ -99,7 +112,7 @@
       <h2>Bot Activity Log</h2>
       {% if data.status_log %}
         {% for l in data.status_log %}
-        <div class="log-line">[{{ l.symbol }}] {{ l.message }} — {{ l.timestamp[11:19] }}</div>
+        <div class="log-line">[{{ l.symbol }}] {{ l.message }} â€” {{ l.timestamp[11:19] }}</div>
         {% endfor %}
       {% else %}
       <div class="empty">No activity yet.</div>
@@ -108,13 +121,11 @@
   </div>
 
 <script>
-  // Auto-refresh the data every 30 seconds without a full page reload
   async function refresh() {
     try {
       const res = await fetch('/api/data');
       const data = await res.json();
       document.getElementById('updated').textContent = data.last_updated;
-      // Simple approach: reload the page to re-render the template server-side
       location.reload();
     } catch (e) {
       console.error('Refresh failed', e);
