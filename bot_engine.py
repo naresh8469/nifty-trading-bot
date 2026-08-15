@@ -1,5 +1,5 @@
 """
-bot_engine.py  (v2 — multi-market)
+bot_engine.py  (v2 â€” multi-market)
 Core strategy logic + paper trading simulation, with state saved to a
 local SQLite database so it survives restarts on the cloud server.
 
@@ -74,6 +74,9 @@ def init_db():
 
 
 def log_status(symbol, message):
+    # Print to stdout too, so it shows up in Render's live "Logs" tab
+    # (not just inside the dashboard's Bot Activity Log).
+    print(f"[{datetime.now(IST).strftime('%H:%M:%S')}] [{symbol}] {message}", flush=True)
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute(
@@ -223,8 +226,13 @@ def check_and_trade(symbol_key):
 
 
 def run_all_symbols():
+    print(f"[{datetime.now(IST).strftime('%H:%M:%S')}] Scheduler tick â€” checking {len(TICKERS)} symbols...", flush=True)
     for symbol_key in TICKERS:
         try:
+            config = TICKERS[symbol_key]
+            if not market_is_open(config["market"], datetime.now(IST)):
+                print(f"  [{symbol_key}] market closed, skipping", flush=True)
+                continue
             check_and_trade(symbol_key)
         except Exception as e:
             log_status(symbol_key, f"ERROR: {e}")
@@ -259,4 +267,3 @@ def get_dashboard_data():
         "status_log": status_df.to_dict("records"),
         "last_updated": datetime.now(IST).strftime("%d-%b-%Y %H:%M:%S IST"),
     }
-    
