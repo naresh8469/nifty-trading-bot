@@ -32,9 +32,22 @@ def api_data():
 
 
 # ---------------- Background scheduler ----------------
+print("Starting background scheduler...", flush=True)
 scheduler = BackgroundScheduler(timezone="Asia/Kolkata")
-scheduler.add_job(bot_engine.run_all_symbols, "interval", minutes=5, id="trading_job")
+# run_date=now-ish via next_run_time so the first check happens immediately
+# on startup instead of waiting 5 minutes â€” makes it easy to confirm the
+# scheduler is actually alive.
+from datetime import datetime
+import pytz
+scheduler.add_job(
+    bot_engine.run_all_symbols,
+    "interval",
+    minutes=5,
+    id="trading_job",
+    next_run_time=datetime.now(pytz.timezone("Asia/Kolkata")),
+)
 scheduler.start()
+print("Scheduler started.", flush=True)
 atexit.register(lambda: scheduler.shutdown())
 
 
