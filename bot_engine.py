@@ -1,10 +1,15 @@
 """
-bot_engine.py
+bot_engine.py  (v2 — multi-market)
 Core strategy logic + paper trading simulation, with state saved to a
 local SQLite database so it survives restarts on the cloud server.
 
-Strategy: EMA(9) x EMA(21) crossover confirmed by RSI(14), intraday,
-fixed stop-loss / target, auto square-off before market close.
+Strategy: EMA(9) x EMA(21) crossover confirmed by RSI(14), intraday-style,
+fixed stop-loss / target (varies per market), auto square-off for NSE only.
+
+Markets covered:
+- NSE indices (Nifty 50, Bank Nifty)   -> trades only during NSE market hours
+- Crypto (Bitcoin, Ethereum)            -> trades 24/7
+- Forex (EUR/USD, GBP/USD)              -> trades Mon-Sat (forex is ~24/5)
 """
 
 import sqlite3
@@ -22,16 +27,19 @@ EMA_SLOW = 21
 RSI_PERIOD = 14
 RSI_BUY_THRESHOLD = 50
 RSI_SELL_THRESHOLD = 50
-STOP_LOSS_PCT = 0.30
-TARGET_PCT = 0.60
-SQUARE_OFF_TIME = time(15, 15)
-MARKET_OPEN = time(9, 15)
-MARKET_CLOSE = time(15, 30)
-CAPITAL_PER_TRADE = 100000
+SQUARE_OFF_TIME = time(15, 15)     # NSE only
+MARKET_OPEN = time(9, 15)          # NSE only
+MARKET_CLOSE = time(15, 30)        # NSE only
 
+# Per-symbol configuration. Crypto gets wider stop-loss/target because it's
+# more volatile; forex sits in between; NSE indices stay tight (intraday).
 TICKERS = {
-    "NIFTY": "^NSEI",
-    "BANKNIFTY": "^NSEBANK",
+    "NIFTY":     {"symbol": "^NSEI",    "market": "nse",    "stop_loss_pct": 0.30, "target_pct": 0.60, "capital": 100000},
+    "BANKNIFTY": {"symbol": "^NSEBANK", "market": "nse",    "stop_loss_pct": 0.30, "target_pct": 0.60, "capital": 100000},
+    "BITCOIN":   {"symbol": "BTC-USD",  "market": "crypto", "stop_loss_pct": 1.20, "target_pct": 2.40, "capital": 100000},
+    "ETHEREUM":  {"symbol": "ETH-USD",  "market": "crypto", "stop_loss_pct": 1.50, "target_pct": 3.00, "capital": 100000},
+    "EURUSD":    {"symbol": "EURUSD=X", "market": "forex",  "stop_loss_pct": 0.25, "target_pct": 0.50, "capital": 100000},
+    "GBPUSD":    {"symbol": "GBPUSD=X", "market": "forex",  "stop_loss_pct": 0.25, "target_pct": 0.50, "capital": 100000},
 }
 
 
@@ -125,7 +133,7 @@ def open_position(symbol, side, price, ts):
     )
     conn.commit()
     conn.close()
-    log_status(symbol, f"Opened {side} at {price:.2f}")
+    log_status(symbol, f"Opened {side} at {price:.4f}")
 
 
 def close_position(trade_id, symbol, exit_price, ts, reason, pnl_pct, pnl_rupees):
@@ -137,22 +145,36 @@ def close_position(trade_id, symbol, exit_price, ts, reason, pnl_pct, pnl_rupees
     """, (ts.isoformat(), exit_price, reason, pnl_pct, pnl_rupees, trade_id))
     conn.commit()
     conn.close()
-    log_status(symbol, f"Closed ({reason}) at {exit_price:.2f}, P&L Rs {pnl_rupees:.2f}")
+    log_status(symbol, f"Closed ({reason}) at {exit_price:.4f}, P&L Rs {pnl_rupees:.2f}")
 
 
-def within_market_hours(now_ist):
-    t = now_ist.time()
-    return MARKET_OPEN <= t <= MARKET_CLOSE
+def market_is_open(market_type, now_ist):
+    """Different markets have different trading calendars."""
+    if market_type == "crypto":
+        return True  # 24/7
+    if market_type == "forex":
+        # Forex is ~24/5: closed roughly Sat 00:00 IST to Sun evening IST.
+        # Simplified: closed all day Saturday.
+        return now_ist.weekday() != 5
+    if market_type == "nse":
+        if now_ist.weekday() >= 5:  # Sat/Sun
+            return False
+        return MARKET_OPEN <= now_ist.time() <= MARKET_CLOSE
+    return False
 
 
 def check_and_trade(symbol_key):
-    """Called every ~5 minutes by the scheduler during market hours."""
-    ticker = TICKERS[symbol_key]
+    """Called every ~5 minutes by the scheduler for every symbol."""
+    config = TICKERS[symbol_key]
+    ticker = config["symbol"]
+    market_type = config["market"]
+    stop_loss_pct = config["stop_loss_pct"]
+    target_pct = config["target_pct"]
+    capital = config["capital"]
+
     now = datetime.now(IST)
 
-    if now.weekday() >= 5:  # Saturday/Sunday
-        return
-    if not within_market_hours(now):
+    if not market_is_open(market_type, now):
         return
 
     df = fetch_latest_data(ticker)
@@ -174,15 +196,17 @@ def check_and_trade(symbol_key):
             pnl_pct = (position["entry_price"] - price) / position["entry_price"] * 100
 
         exit_reason = None
-        if now.time() >= SQUARE_OFF_TIME:
+        # NSE positions get force-squared-off before close; crypto/forex don't
+        # have a single daily close, so they only exit on SL/target.
+        if market_type == "nse" and now.time() >= SQUARE_OFF_TIME:
             exit_reason = "Intraday square-off"
-        elif pnl_pct <= -STOP_LOSS_PCT:
+        elif pnl_pct <= -stop_loss_pct:
             exit_reason = "Stop-loss hit"
-        elif pnl_pct >= TARGET_PCT:
+        elif pnl_pct >= target_pct:
             exit_reason = "Target hit"
 
         if exit_reason:
-            pnl_rupees = CAPITAL_PER_TRADE * (pnl_pct / 100)
+            pnl_rupees = capital * (pnl_pct / 100)
             close_position(position["id"], symbol_key, price, now, exit_reason, pnl_pct, pnl_rupees)
         return  # one trade at a time per symbol
 
@@ -195,7 +219,7 @@ def check_and_trade(symbol_key):
     elif crossed_down and latest["rsi"] < RSI_SELL_THRESHOLD:
         open_position(symbol_key, "SELL", price, now)
     else:
-        log_status(symbol_key, f"No signal. Price {price:.2f}, RSI {latest['rsi']:.1f}")
+        log_status(symbol_key, f"No signal. Price {price:.4f}, RSI {latest['rsi']:.1f}")
 
 
 def run_all_symbols():
@@ -209,19 +233,20 @@ def run_all_symbols():
 def get_dashboard_data():
     conn = sqlite3.connect(DB_PATH)
     trades_df = pd.read_sql_query("SELECT * FROM trades ORDER BY id DESC", conn)
-    status_df = pd.read_sql_query("SELECT * FROM status_log ORDER BY id DESC LIMIT 30", conn)
+    status_df = pd.read_sql_query("SELECT * FROM status_log ORDER BY id DESC LIMIT 40", conn)
     conn.close()
 
     closed = trades_df[trades_df["status"] == "CLOSED"] if not trades_df.empty else trades_df
     open_trades = trades_df[trades_df["status"] == "OPEN"] if not trades_df.empty else trades_df
 
     summary = {}
-    for symbol_key in TICKERS:
+    for symbol_key, config in TICKERS.items():
         sym_closed = closed[closed["symbol"] == symbol_key] if not closed.empty else closed
         total = len(sym_closed)
         wins = len(sym_closed[sym_closed["pnl_rupees"] > 0]) if total else 0
         total_pnl = sym_closed["pnl_rupees"].sum() if total else 0
         summary[symbol_key] = {
+            "market": config["market"],
             "total_trades": total,
             "win_rate": round(wins / total * 100, 1) if total else 0,
             "total_pnl": round(total_pnl, 2),
@@ -234,3 +259,4 @@ def get_dashboard_data():
         "status_log": status_df.to_dict("records"),
         "last_updated": datetime.now(IST).strftime("%d-%b-%Y %H:%M:%S IST"),
     }
+    
